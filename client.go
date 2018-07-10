@@ -20,10 +20,19 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// DefaultRetry is a default retry backoff settings when retrying API calls
+var DefaultRetry = wait.Backoff{
+	Steps:    5,
+	Duration: 10 * time.Millisecond,
+	Factor:   1.0,
+	Jitter:   0.1,
+}
 
 // This is a slice of the "managed" clients which are cleaned up when
 // calling Cleanup
@@ -120,15 +129,16 @@ type ClientConfig struct {
 //
 // See NewClient and ClientConfig for using a Client.
 type Client struct {
-	exited      bool
-	config      *ClientConfig
-	kubeClient  kubernetes.Interface
-	doneLogging chan struct{}
-	l           sync.Mutex
-	address     net.Addr
-	client      ClientProtocol
-	logger      hclog.Logger
-	doneCtx     context.Context
+	exited         bool
+	config         *ClientConfig
+	kubeClient     kubernetes.Interface
+	doneLogging    chan struct{}
+	l              sync.Mutex
+	address        net.Addr
+	client         ClientProtocol
+	logger         hclog.Logger
+	doneCtx        context.Context
+	deploymentName string
 }
 
 // NewClient creates a new plugin client which manages the lifecycle of an external
@@ -210,6 +220,11 @@ func (c *Client) Client() (ClientProtocol, error) {
 // Once a client has been started once, it cannot be started again, even if
 // it was killed.
 func (c *Client) Start() (addr net.Addr, err error) {
+	defer func(c *Client) {
+		if err != nil {
+			c.Kill()
+		}
+	}(c)
 	c.l.Lock()
 	defer c.l.Unlock()
 
@@ -238,12 +253,6 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		return nil, err
 	}
 
-	// Create the logging channel for when we kill
-	c.doneLogging = make(chan struct{})
-	// Create a context for when we kill
-	var ctxCancel context.CancelFunc
-	c.doneCtx, ctxCancel = context.WithCancel(context.Background())
-
 	cookieEnv := corev1.EnvVar{
 		Name:  c.config.MagicCookieKey,
 		Value: c.config.MagicCookieValue,
@@ -255,21 +264,17 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	deployment := *c.config.Deployment
 	service := *c.config.Service
 
-	// todo: apply label overrides to deployment and service
-
-	// apply overrides to the deployment and service
-	service.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
-		*metav1.NewControllerRef(&deployment, appsv1.SchemeGroupVersion.WithKind("Deployment")),
-	}
+	// todo: apply label overrides to deployment and service or verify this in validate
 
 	// apply an environment variable to all deployment's containers
-	for _, container := range deployment.Spec.Template.Spec.Containers {
+	for i, container := range deployment.Spec.Template.Spec.Containers {
 		if container.Env == nil {
 			container.Env = make([]corev1.EnvVar, 0)
 		}
 		container.Env = append(container.Env, cookieEnv)
 		container.Stdin = true
 		//container.StdinOnce = true
+		deployment.Spec.Template.Spec.Containers[i] = container
 	}
 
 	// create the deployment and service
@@ -277,33 +282,101 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create deployment '%s': %s", deployment.Name, err)
 	}
+	c.deploymentName = createdDeployment.Name
+
+	// apply overrides to the deployment and service
+	service.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(createdDeployment, appsv1.SchemeGroupVersion.WithKind("Deployment")),
+	}
 	createdService, err := services.Create(&service)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service '%s': %s", service.Name, err)
 	}
 
+	// TODO: remove this
+	time.Sleep(5 * time.Second)
+
 	c.logger.Debug("starting plugin")
-	addr, err = net.ResolveTCPAddr("tcp", createdService.Name)
+	//serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
+	serviceAddr := createdService.Name + ":7777"
+	addr, err = net.ResolveTCPAddr("tcp", serviceAddr)
 	if err != nil {
-		c.logger.Warn("failed to resolve tcp address from service name '%s': %s", createdService.Name, err)
+		c.logger.Warn("failed to resolve tcp address from service name", serviceAddr, err)
 	}
 
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
 
-	podName := createdDeployment.Spec.Template.Name
-	containerName := createdDeployment.Spec.Template.Spec.Containers[0].Name
-
 	// TODO: ideally we should iterate over the retrieved pods after we list according to some listOpts using labels
-	logs, err := GetContainerLogs(c.config.KubeConfig, c.config.Namespace, podName, newPodLogOptions(containerName, true, 0))
+	pods := c.kubeClient.CoreV1().Pods(c.config.Namespace)
+	var timeoutList int64
+	timeoutList = 5
+	var podList *corev1.PodList
+	/*
+		err = wait.ExponentialBackoff(DefaultRetry, func() (bool, error) {
+			c.logger.Info("attempting to list plugin pods")
+
+			opts := metav1.ListOptions{
+				LabelSelector:  labels.Set{"plugin": "kv"}.String(),
+				TimeoutSeconds: &timeoutList,
+			}
+			podList, err = pods.List(opts)
+			if err != nil {
+				c.logger.Warn("failed to list pods", err)
+				if !IsRetryableKubeAPIError(err) {
+					c.logger.Info("error is not retryable")
+					return false, err
+				}
+				c.logger.Info("error is retryable")
+				return false, nil
+			}
+			if len(podList.Items) == 0 {
+				c.logger.Info("no pods found")
+				return false, nil
+			}
+			c.logger.Info("found pod!", podList.Items[0])
+			p := podList.Items[0]
+			if p.Status.Phase == corev1.PodRunning {
+				return true, nil
+			}
+			return false, nil
+		})
+	*/
+	//time.Sleep(5 * time.Second)
+	opts := metav1.ListOptions{
+		LabelSelector:  labels.Set{"plugin": "kv"}.String(),
+		TimeoutSeconds: &timeoutList,
+	}
+	podList, err = pods.List(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pods for deployment: %s", err)
+	}
+	if len(podList.Items) != 1 {
+		return nil, fmt.Errorf("number of pods does not equal 1")
+	}
+	podName := podList.Items[0].Name
+	containerName := podList.Items[0].Spec.Containers[0].Name
+	req := pods.GetLogs(podName, &corev1.PodLogOptions{
+		Container: containerName,
+		Follow:    true,
+	})
+	c.logger.Debug("getting container logs", *req)
+	logs, err := GetContainerLogs(c.config.KubeConfig, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container '%s' logs: %s", containerName, err)
 	}
 
+	c.logger.Debug("forwarding container logs")
 	err = ForwardContainerOutput(logs, stdoutW, stderrW)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stream container '%s' logs: %s", containerName, err)
 	}
+
+	// Create the logging channel for when we kill
+	c.doneLogging = make(chan struct{})
+	// Create a context for when we kill
+	var ctxCancel context.CancelFunc
+	c.doneCtx, ctxCancel = context.WithCancel(context.Background())
 
 	// Make sure the command is properly cleaned up if there is an error
 	defer func() {
@@ -444,7 +517,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 
 		switch parts[2] {
 		case "tcp":
-			addr, err = net.ResolveTCPAddr("tcp", parts[3])
+			//addr, err = net.ResolveTCPAddr("tcp", parts[3])
 			break
 		default:
 			err = fmt.Errorf("Unknown address type: %s", parts[3])
@@ -471,7 +544,7 @@ func (c *Client) Exited() bool {
 // This method can safely be called multiple times.
 func (c *Client) Kill() {
 	deployments := c.kubeClient.AppsV1().Deployments(c.config.Namespace)
-	deployment, err := deployments.Get(c.config.Deployment.Name, metav1.GetOptions{})
+	deployment, err := deployments.Get(c.deploymentName, metav1.GetOptions{})
 	if err != nil {
 		c.logger.Warn("failed getting deployment '%s'. nothing to kill.", deployment.Name)
 		return

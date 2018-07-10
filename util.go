@@ -2,9 +2,8 @@ package intercom
 
 import (
 	"io"
-	"strconv"
 
-	"k8s.io/client-go/kubernetes"
+	apierr "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 )
@@ -29,24 +28,7 @@ func newPodLogOptions(container string, follow bool, tail int) *podLogOptions {
 }
 
 // GetContainerLogs returns the remotecommand.Executor for the pod's container
-func GetContainerLogs(restConfig *rest.Config, namespace string, pod string, logOptions *podLogOptions) (remotecommand.Executor, error) {
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	req := clientset.CoreV1().RESTClient().Get().
-		Resource("pods").
-		Namespace(namespace).
-		Name(pod).
-		SubResource("log").
-		Param("follow", strconv.FormatBool(logOptions.follow)).
-		Param("container", logOptions.container)
-
-	if logOptions.tailLines != nil {
-		req.Param("tailLines", strconv.FormatInt(*logOptions.tailLines, 10))
-	}
-
+func GetContainerLogs(restConfig *rest.Config, req *rest.Request) (remotecommand.Executor, error) {
 	exec, err := remotecommand.NewSPDYExecutor(restConfig, "GET", req.URL())
 	if err != nil {
 		return nil, err
@@ -65,4 +47,12 @@ func ForwardContainerOutput(exec remotecommand.Executor, stdOutWriter io.Writer,
 		return err
 	}
 	return nil
+}
+
+// IsRetryableKubeAPIError returns if the error is a retryable kubernetes error
+func IsRetryableKubeAPIError(err error) bool {
+	if apierr.IsNotFound(err) || apierr.IsForbidden(err) || apierr.IsInvalid(err) || apierr.IsMethodNotSupported(err) {
+		return false
+	}
+	return true
 }
