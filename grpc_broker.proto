@@ -1,0 +1,12 @@
+syntax = "proto3";
+package intercom;
+
+message ConnInfo {
+    uint32 serviceID = 1;
+    string network = 2;
+    string address = 3;
+}
+
+service GRPCBroker {
+    rpc StartStream(stream ConnInfo) returns (stream ConnInfo);
+}
