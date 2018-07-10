@@ -8,6 +8,7 @@ import (
 // ValidateDeployment for the plugin
 func ValidateDeployment(d *appsv1.Deployment) error {
 	// 1. only one container may be defined
+
 	return nil
 }
 

@@ -294,6 +294,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	podName := createdDeployment.Spec.Template.Name
 	containerName := createdDeployment.Spec.Template.Spec.Containers[0].Name
 
+	// TODO: ideally we should iterate over the retrieved pods after we list according to some listOpts using labels
 	logs, err := GetContainerLogs(c.config.KubeConfig, c.config.Namespace, podName, newPodLogOptions(containerName, true, 0))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get container '%s' logs: %s", containerName, err)
