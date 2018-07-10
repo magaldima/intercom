@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 
-	"github.com/blackrock/axis/common"
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/magaldima/intercom"
 	"k8s.io/client-go/rest"
@@ -21,7 +20,7 @@ import (
 var (
 	kubeConfig  string // --kubeconfig
 	pluginImage string // --pluginImage
-	namespace   string
+	namespace   string // --namespace
 )
 
 func init() {
@@ -40,7 +39,7 @@ func main() {
 		Level:  hclog.Debug,
 	})
 
-	restConfig, err := common.GetClientConfig(kubeConfig)
+	restConfig, err := GetClientConfig(kubeConfig)
 	if err != nil {
 		panic(err)
 	}
