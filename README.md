@@ -1,3 +1,4 @@
+[![Build Status](https://travis-ci.org/magaldima/intercom.svg?branch=master)](https://travis-ci.org/magaldima/intercom)
 # intercom
 
 `intercom` is a containerized plugin system over gRPC. My goal was to be able to deploy Kubernetes `Deployments` or `StatefulSets` along with a `Service` that would act as a blackbox interface defined by the gRPC protocol.
