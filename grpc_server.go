@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 )
 
 // GRPCServiceName is the name of the service that the health check should
@@ -113,6 +114,8 @@ func (s *GRPCServer) Config() string {
 // Serve the ServerProtocol impl.
 func (s *GRPCServer) Serve(lis net.Listener) {
 	// Start serving in a goroutine
+	// todo: enabling reflection
+	reflection.Register(s.server)
 	go s.server.Serve(lis)
 
 	// Wait until graceful completion

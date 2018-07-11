@@ -284,7 +284,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		if err != nil || r != nil {
 			err = deployments.Delete(c.deploymentName, &metav1.DeleteOptions{})
 			if err != nil {
-				c.logger.Warn("failed to clean up deployment", err)
+				c.logger.Warn("failed to clean up deployment", c.deploymentName, err)
 			}
 		}
 
@@ -304,8 +304,9 @@ func (c *Client) Start() (addr net.Addr, err error) {
 
 	c.logger.Debug("starting plugin")
 	addr = &ServiceAddr{
-		Name: createdService.Name,
-		Port: createdService.Spec.Ports[0].Port,
+		Name:      createdService.Name,
+		Namespace: c.config.Namespace,
+		Port:      createdService.Spec.Ports[0].Port,
 	}
 	/*
 		serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
@@ -590,9 +591,11 @@ func (c *Client) Kill() {
 		}
 	}
 
-	// If graceful exiting failed, just kill it
-
-	deployments.Delete(c.config.Deployment.Name, &metav1.DeleteOptions{})
+	// If graceful exiting failed, just kill the deployment
+	err = deployments.Delete(deployment.Name, &metav1.DeleteOptions{})
+	if err != nil {
+		c.logger.Warn("failed to delete deployment", deployment.Name, err)
+	}
 
 	// Wait for the client to finish logging so we have a complete log
 	<-doneCh
