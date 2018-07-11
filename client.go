@@ -305,6 +305,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	if err != nil {
 		c.logger.Warn("failed to resolve tcp address from service name", serviceAddr, err)
 	}
+	c.logger.Debug("resolved service address", addr)
 
 	// all the stuff that follows should verify the plugin on startup
 	// go-plugin was doing this through reading the remote logs
