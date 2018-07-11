@@ -510,9 +510,8 @@ func (c *Client) Start() (addr net.Addr, err error) {
 				return
 			}
 		}
-
-		c.address = addr
 	*/
+	c.address = addr
 	return
 }
 
