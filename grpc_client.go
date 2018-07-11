@@ -76,6 +76,9 @@ func dialGRPCConn(tls *tls.Config, dialer func(string, time.Duration) (net.Conn,
 	// We use a custom dialer so that we can connect over unix domain sockets
 	opts = append(opts, grpc.WithDialer(dialer))
 
+	// we add a timeout
+	opts = append(opts, grpc.WithTimeout(5*time.Second))
+
 	// go-plugin expects to block the connection
 	opts = append(opts, grpc.WithBlock())
 

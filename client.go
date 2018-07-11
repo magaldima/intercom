@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -193,6 +192,7 @@ func (c *Client) Client() (ClientProtocol, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.logger.Info("plugin successfully started")
 
 	c.l.Lock()
 	defer c.l.Unlock()
@@ -282,7 +282,10 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		r := recover()
 
 		if err != nil || r != nil {
-			deployments.Delete(deployment.Name, &metav1.DeleteOptions{})
+			err = deployments.Delete(c.deploymentName, &metav1.DeleteOptions{})
+			if err != nil {
+				c.logger.Warn("failed to clean up deployment", err)
+			}
 		}
 
 		if r != nil {
@@ -300,12 +303,18 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	}
 
 	c.logger.Debug("starting plugin")
-	serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
-	addr, err = net.ResolveTCPAddr("tcp", serviceAddr)
-	if err != nil {
-		c.logger.Warn("failed to resolve tcp address from service name", serviceAddr, err)
+	addr = &ServiceAddr{
+		Name: createdService.Name,
+		Port: createdService.Spec.Ports[0].Port,
 	}
-	c.logger.Debug("resolved service address", addr)
+	/*
+		serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
+		addr, err = net.ResolveTCPAddr("tcp", serviceAddr)
+		if err != nil {
+			c.logger.Warn("failed to resolve tcp address from service name", serviceAddr, err)
+		}
+	*/
+	c.logger.Debug("resolved service address", addr.String())
 
 	// all the stuff that follows should verify the plugin on startup
 	// go-plugin was doing this through reading the remote logs
@@ -532,7 +541,7 @@ func (c *Client) Kill() {
 	deployments := c.kubeClient.AppsV1().Deployments(c.config.Namespace)
 	deployment, err := deployments.Get(c.deploymentName, metav1.GetOptions{})
 	if err != nil {
-		c.logger.Warn("failed getting deployment '%s'. nothing to kill.", deployment.Name)
+		c.logger.Warn("failed getting deployment. nothing to kill.")
 		return
 	}
 
@@ -592,6 +601,8 @@ func (c *Client) Kill() {
 func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) {
 	return func(_ string, _ time.Duration) (net.Conn, error) {
 		// Connect to the client
+		//todo: use the timeout
+		//net.DialTimeout()
 		conn, err := net.Dial(addr.Network(), addr.String())
 		if err != nil {
 			return nil, err
