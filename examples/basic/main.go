@@ -66,6 +66,11 @@ func main() {
 							Name:            "greeter",
 							Image:           pluginImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
+							Ports: []corev1.ContainerPort{
+								{
+									ContainerPort: 50077,
+								},
+							},
 						},
 					},
 				},
@@ -82,6 +87,7 @@ func main() {
 			Namespace:    namespace,
 		},
 		Spec: corev1.ServiceSpec{
+			Type: corev1.ServiceTypeLoadBalancer,
 			Ports: []corev1.ServicePort{
 				{
 					Port:       7777,
@@ -116,6 +122,11 @@ func main() {
 	if err != nil {
 		fmt.Println("Error:", err.Error())
 		os.Exit(1)
+	}
+
+	err = rpcClient.Ping()
+	if err != nil {
+		fmt.Println("Error:", err.Error())
 	}
 
 	// We should have a Greeter now

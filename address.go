@@ -16,5 +16,8 @@ func (addr *ServiceAddr) Network() string {
 
 // String format of the ServiceAddr
 func (addr *ServiceAddr) String() string {
+	if addr.Namespace != "" {
+		return addr.Name + "." + addr.Namespace + ":" + strconv.FormatInt(int64(addr.Port), 10)
+	}
 	return addr.Name + ":" + strconv.FormatInt(int64(addr.Port), 10)
 }

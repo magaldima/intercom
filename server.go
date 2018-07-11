@@ -22,7 +22,7 @@ import (
 const CoreProtocolVersion = 1
 
 // DefaultServerPort is the default server port for net listeners
-const DefaultServerPort = 5577
+const DefaultServerPort = 50077
 
 // HandshakeConfig is the configuration used by client and servers to
 // handshake before starting a plugin connection. This is embedded by
@@ -126,7 +126,7 @@ func Serve(opts *ServeConfig) {
 	// is abstracted to the cluster via a Service
 	listener, err := serverListener()
 	if err != nil {
-		logger.Error("plugin init error", "error", err)
+		logger.Error("failed to listen", err)
 		return
 	}
 

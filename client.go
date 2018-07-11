@@ -605,7 +605,6 @@ func netAddrDialer(addr net.Addr) func(string, time.Duration) (net.Conn, error) 
 	return func(_ string, _ time.Duration) (net.Conn, error) {
 		// Connect to the client
 		//todo: use the timeout
-		//net.DialTimeout()
 		conn, err := net.Dial(addr.Network(), addr.String())
 		if err != nil {
 			return nil, err
