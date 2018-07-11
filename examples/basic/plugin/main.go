@@ -8,7 +8,7 @@ import (
 // Greeter is a real implementation of Greeter that simply prints hello, world
 type Greeter struct{}
 
-// Greet with hello, world
+// Greet with hello, world message
 func (Greeter) Greet() (string, error) {
 	return "hello, world", nil
 }

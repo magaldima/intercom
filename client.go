@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +19,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -311,15 +309,15 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	// all the stuff that follows should verify the plugin on startup
 	// go-plugin was doing this through reading the remote logs
 
-	stdoutR, stdoutW := io.Pipe()
-	stderrR, stderrW := io.Pipe()
-
-	// TODO: ideally we should iterate over the retrieved pods after we list according to some listOpts using labels
-	pods := c.kubeClient.CoreV1().Pods(c.config.Namespace)
-	var timeoutList int64
-	timeoutList = 5
-	var podList *corev1.PodList
 	/*
+		stdoutR, stdoutW := io.Pipe()
+		stderrR, stderrW := io.Pipe()
+
+		// TODO: ideally we should iterate over the retrieved pods after we list according to some listOpts using labels
+		pods := c.kubeClient.CoreV1().Pods(c.config.Namespace)
+		var timeoutList int64
+		timeoutList = 5
+		var podList *corev1.PodList
 		err = wait.ExponentialBackoff(DefaultRetry, func() (bool, error) {
 			c.logger.Info("attempting to list plugin pods")
 
@@ -348,178 +346,172 @@ func (c *Client) Start() (addr net.Addr, err error) {
 			}
 			return false, nil
 		})
-	*/
-	//time.Sleep(5 * time.Second)
-	opts := metav1.ListOptions{
-		LabelSelector:  labels.Set{"plugin": "greeter"}.String(),
-		TimeoutSeconds: &timeoutList,
-	}
-	podList, err = pods.List(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get pods for deployment: %s", err)
-	}
-	if len(podList.Items) != 1 {
-		return nil, fmt.Errorf("number of pods does not equal 1")
-	}
-	podName := podList.Items[0].Name
-	containerName := podList.Items[0].Spec.Containers[0].Name
-	req := pods.GetLogs(podName, &corev1.PodLogOptions{
-		Container: containerName,
-		Follow:    true,
-	})
-	c.logger.Debug("getting container logs", *req)
-	logs, err := GetContainerLogs(c.config.KubeConfig, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get container '%s' logs: %s", containerName, err)
-	}
-
-	c.logger.Debug("forwarding container logs")
-	err = ForwardContainerOutput(logs, stdoutW, stderrW)
-	if err != nil {
-		return nil, fmt.Errorf("failed to stream container '%s' logs: %s", containerName, err)
-	}
-
-	// Create the logging channel for when we kill
-	c.doneLogging = make(chan struct{})
-	// Create a context for when we kill
-	var ctxCancel context.CancelFunc
-	c.doneCtx, ctxCancel = context.WithCancel(context.Background())
-
-	// Start goroutine to wait for deployment to exit
-	exitCh := make(chan struct{})
-	go func() {
-		// Make sure we close the write end of our stderr/stdout so
-		// that the readers send EOF properly.
-		defer stderrW.Close()
-		defer stdoutW.Close()
-
-		// Wait for the deployment to be destroyed
-		waitCondition := func() (done bool, err error) {
-			obj, err := deployments.Get(deployment.Name, metav1.GetOptions{})
-			if err != nil {
-				return false, err
-			}
-			if obj == nil {
-				return true, nil
-			}
-			return false, nil
+		if err != nil {
+			return nil, fmt.Errorf("failed to get pods for deployment: %s", err)
 		}
-		wait.PollUntil(time.Second*10, waitCondition, c.doneCtx.Done())
-
-		// Log and make sure to flush the logs write away
-		c.logger.Debug("plugin deployment exited")
-		os.Stderr.Sync()
-
-		// Mark that we exited
-		close(exitCh)
-
-		// Cancel the context, marking that we exited
-		ctxCancel()
-
-		// Set that we exited, which takes a lock
-		c.l.Lock()
-		defer c.l.Unlock()
-		c.exited = true
-	}()
-
-	// Start goroutine that logs the stderr
-	go c.logStderr(stderrR)
-
-	// Start a goroutine that is going to be reading the lines
-	// out of stdout
-	linesCh := make(chan []byte)
-	go func() {
-		defer close(linesCh)
-
-		buf := bufio.NewReader(stdoutR)
-		for {
-			line, err := buf.ReadBytes('\n')
-			if line != nil {
-				linesCh <- line
-			}
-
-			if err == io.EOF {
-				return
-			}
+		if len(podList.Items) != 1 {
+			return nil, fmt.Errorf("number of pods does not equal 1")
 		}
-	}()
+		podName := podList.Items[0].Name
+		containerName := podList.Items[0].Spec.Containers[0].Name
+		req := pods.GetLogs(podName, &corev1.PodLogOptions{
+			Container: containerName,
+			Follow:    true,
+		})
+		c.logger.Debug("getting container logs", *req)
+		logs, err := GetContainerLogs(c.config.KubeConfig, req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get container '%s' logs: %s", containerName, err)
+		}
 
-	// Make sure after we exit we read the lines from stdout forever
-	// so they don't block since it is an io.Pipe
-	defer func() {
+		c.logger.Debug("forwarding container logs")
+		err = ForwardContainerOutput(logs, stdoutW, stderrW)
+		if err != nil {
+			return nil, fmt.Errorf("failed to stream container '%s' logs: %s", containerName, err)
+		}
+
+		// Create the logging channel for when we kill
+		c.doneLogging = make(chan struct{})
+		// Create a context for when we kill
+		var ctxCancel context.CancelFunc
+		c.doneCtx, ctxCancel = context.WithCancel(context.Background())
+
+		// Start goroutine to wait for deployment to exit
+		exitCh := make(chan struct{})
 		go func() {
-			for _ = range linesCh {
+			// Make sure we close the write end of our stderr/stdout so
+			// that the readers send EOF properly.
+			defer stderrW.Close()
+			defer stdoutW.Close()
+
+			// Wait for the deployment to be destroyed
+			waitCondition := func() (done bool, err error) {
+				obj, err := deployments.Get(deployment.Name, metav1.GetOptions{})
+				if err != nil {
+					return false, err
+				}
+				if obj == nil {
+					return true, nil
+				}
+				return false, nil
+			}
+			wait.PollUntil(time.Second*10, waitCondition, c.doneCtx.Done())
+
+			// Log and make sure to flush the logs write away
+			c.logger.Debug("plugin deployment exited")
+			os.Stderr.Sync()
+
+			// Mark that we exited
+			close(exitCh)
+
+			// Cancel the context, marking that we exited
+			ctxCancel()
+
+			// Set that we exited, which takes a lock
+			c.l.Lock()
+			defer c.l.Unlock()
+			c.exited = true
+		}()
+
+		// Start goroutine that logs the stderr
+		go c.logStderr(stderrR)
+
+		// Start a goroutine that is going to be reading the lines
+		// out of stdout
+		linesCh := make(chan []byte)
+		go func() {
+			defer close(linesCh)
+
+			buf := bufio.NewReader(stdoutR)
+			for {
+				line, err := buf.ReadBytes('\n')
+				if line != nil {
+					linesCh <- line
+				}
+
+				if err == io.EOF {
+					return
+				}
 			}
 		}()
-	}()
 
-	// Some channels for the next step
-	timeout := time.After(c.config.StartTimeout)
+		// Make sure after we exit we read the lines from stdout forever
+		// so they don't block since it is an io.Pipe
+		defer func() {
+			go func() {
+				for _ = range linesCh {
+				}
+			}()
+		}()
 
-	// Start looking for the address
-	c.logger.Debug("waiting for RPC address")
-	select {
-	case <-timeout:
-		err = errors.New("timeout while waiting for plugin to start")
-	case <-exitCh:
-		err = errors.New("plugin exited before we could connect")
-	case lineBytes := <-linesCh:
-		// Trim the line and split by "|" in order to get the parts of
-		// the output.
-		line := strings.TrimSpace(string(lineBytes))
-		parts := strings.SplitN(line, "|", 5)
-		if len(parts) < 4 {
-			err = fmt.Errorf(
-				"Unrecognized remote plugin message: %s\n\n"+
-					"This usually means that the plugin is either invalid or simply\n"+
-					"needs to be recompiled to support the latest protocol.", line)
-			return
-		}
+		// Some channels for the next step
+		timeout := time.After(c.config.StartTimeout)
 
-		// Check the core protocol. Wrapped in a {} for scoping.
-		{
-			var coreProtocol int64
-			coreProtocol, err = strconv.ParseInt(parts[0], 10, 0)
+		// Start looking for the address
+		c.logger.Debug("waiting for RPC address")
+		select {
+		case <-timeout:
+			err = errors.New("timeout while waiting for plugin to start")
+		case <-exitCh:
+			err = errors.New("plugin exited before we could connect")
+		case lineBytes := <-linesCh:
+			// Trim the line and split by "|" in order to get the parts of
+			// the output.
+			line := strings.TrimSpace(string(lineBytes))
+			parts := strings.SplitN(line, "|", 5)
+			if len(parts) < 4 {
+				err = fmt.Errorf(
+					"Unrecognized remote plugin message: %s\n\n"+
+						"This usually means that the plugin is either invalid or simply\n"+
+						"needs to be recompiled to support the latest protocol.", line)
+				return
+			}
+
+			// Check the core protocol. Wrapped in a {} for scoping.
+			{
+				var coreProtocol int64
+				coreProtocol, err = strconv.ParseInt(parts[0], 10, 0)
+				if err != nil {
+					err = fmt.Errorf("Error parsing core protocol version: %s", err)
+					return
+				}
+
+				if int(coreProtocol) != CoreProtocolVersion {
+					err = fmt.Errorf("Incompatible core API version with plugin. "+
+						"Plugin version: %s, Core version: %d\n\n"+
+						"To fix this, the plugin usually only needs to be recompiled.\n"+
+						"Please report this to the plugin author.", parts[0], CoreProtocolVersion)
+					return
+				}
+			}
+
+			// Parse the protocol version
+			var protocol int64
+			protocol, err = strconv.ParseInt(parts[1], 10, 0)
 			if err != nil {
-				err = fmt.Errorf("Error parsing core protocol version: %s", err)
+				err = fmt.Errorf("Error parsing protocol version: %s", err)
 				return
 			}
 
-			if int(coreProtocol) != CoreProtocolVersion {
-				err = fmt.Errorf("Incompatible core API version with plugin. "+
-					"Plugin version: %s, Core version: %d\n\n"+
-					"To fix this, the plugin usually only needs to be recompiled.\n"+
-					"Please report this to the plugin author.", parts[0], CoreProtocolVersion)
+			// Test the API version
+			if uint(protocol) != c.config.ProtocolVersion {
+				err = fmt.Errorf("Incompatible API version with plugin. "+
+					"Plugin version: %s, Core version: %d", parts[1], c.config.ProtocolVersion)
+				return
+			}
+
+			switch parts[2] {
+			case "tcp":
+				//addr, err = net.ResolveTCPAddr("tcp", parts[3])
+				break
+			default:
+				err = fmt.Errorf("Unknown address type: %s", parts[3])
 				return
 			}
 		}
 
-		// Parse the protocol version
-		var protocol int64
-		protocol, err = strconv.ParseInt(parts[1], 10, 0)
-		if err != nil {
-			err = fmt.Errorf("Error parsing protocol version: %s", err)
-			return
-		}
-
-		// Test the API version
-		if uint(protocol) != c.config.ProtocolVersion {
-			err = fmt.Errorf("Incompatible API version with plugin. "+
-				"Plugin version: %s, Core version: %d", parts[1], c.config.ProtocolVersion)
-			return
-		}
-
-		switch parts[2] {
-		case "tcp":
-			//addr, err = net.ResolveTCPAddr("tcp", parts[3])
-			break
-		default:
-			err = fmt.Errorf("Unknown address type: %s", parts[3])
-			return
-		}
-	}
-
-	c.address = addr
+		c.address = addr
+	*/
 	return
 }
 
