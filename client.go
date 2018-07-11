@@ -192,7 +192,6 @@ func (c *Client) Client() (ClientProtocol, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.logger.Info("plugin successfully started")
 
 	c.l.Lock()
 	defer c.l.Unlock()
@@ -592,6 +591,7 @@ func (c *Client) Kill() {
 	}
 
 	// If graceful exiting failed, just kill the deployment
+	c.logger.Info("graceful exit failed.. deleting the plugin deployment")
 	err = deployments.Delete(deployment.Name, &metav1.DeleteOptions{})
 	if err != nil {
 		c.logger.Warn("failed to delete deployment", deployment.Name, err)

@@ -18,5 +18,3 @@ func (addr *ServiceAddr) Network() string {
 func (addr *ServiceAddr) String() string {
 	return addr.Name + ":" + strconv.FormatInt(int64(addr.Port), 10)
 }
-
-//rpc error: code = Unavailable desc = all SubConns are in TransientFailure, latest connection error: connection error: desc = "transport: error while dialing: dial tcp: lookup greeter-plugin-svc-8fm77.default: no such host"
