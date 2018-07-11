@@ -1,0 +1,17 @@
+# This is the job to run on a Kubernetes cluster
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: plugin-example
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 4
+  template:
+    spec:
+      serviceAccountName: plugin
+      containers:
+      - name: plugin-ex
+        image: mmagaldi/basic-plugin-ex:latest
+        imagePullPolicy: IfNotPresent
+      restartPolicy: Never

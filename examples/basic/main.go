@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -17,20 +16,22 @@ import (
 	"github.com/magaldima/intercom/examples/basic/shared"
 )
 
-var (
-	kubeConfig  string // --kubeconfig
-	pluginImage string // --pluginImage
-	namespace   string // --namespace
+// various default values for the env vars
+const (
+	DefaultPluginImage = "mmagaldi/greeter-plugin:latest"
+	DefaultNamespace   = "default"
 )
 
-func init() {
-	flag.StringVar(&kubeConfig, "kubeConfig", "", "absolute path to the kubeconfig file")
-	flag.StringVar(&pluginImage, "pluginImage", "", "the image of the plugin to deploy")
-	flag.StringVar(&namespace, "namespace", "default", "the namespace to deploy")
-}
-
 func main() {
-	flag.Parse()
+	pluginImage, ok := os.LookupEnv("pluginImage")
+	if !ok {
+		pluginImage = DefaultPluginImage
+	}
+	namespace, ok := os.LookupEnv("namespace")
+	if !ok {
+		namespace = DefaultNamespace
+	}
+	kubeConfig, _ := os.LookupEnv("kubeConfig")
 
 	// Create an hclog.Logger
 	logger := hclog.New(&hclog.LoggerOptions{
@@ -45,12 +46,12 @@ func main() {
 	}
 
 	labels := make(map[string]string)
-	labels["plugin"] = "kv"
+	labels["plugin"] = "greeter"
 
 	// create the deployment and service
 	deployment := appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "kv-plugin-",
+			GenerateName: "greeter-plugin-",
 			Namespace:    namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -59,9 +60,10 @@ func main() {
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: "plugin", // TODO: source this
 					Containers: []corev1.Container{
 						{
-							Name:            "kv",
+							Name:            "greeter",
 							Image:           pluginImage,
 							ImagePullPolicy: corev1.PullIfNotPresent,
 						},
@@ -76,7 +78,7 @@ func main() {
 
 	service := corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "kv-plugin-",
+			GenerateName: "greeter-plugin-svc-",
 			Namespace:    namespace,
 		},
 		Spec: corev1.ServiceSpec{
@@ -95,7 +97,7 @@ func main() {
 		HandshakeConfig: shared.Handshake,
 		Plugins:         shared.PluginMap,
 		KubeConfig:      restConfig,
-		Namespace:       "default",
+		Namespace:       namespace,
 		Deployment:      &deployment,
 		Service:         &service,
 		Logger:          logger,
@@ -110,37 +112,15 @@ func main() {
 	}
 
 	// Request the plugin
-	raw, err := rpcClient.Dispense("kv")
+	raw, err := rpcClient.Dispense("greeter")
 	if err != nil {
 		fmt.Println("Error:", err.Error())
 		os.Exit(1)
 	}
 
-	// We should have a KV store now! This feels like a normal interface
-	// implementation but is in fact over an RPC connection.
-	kv := raw.(shared.KV)
-	os.Args = os.Args[1:]
-	switch os.Args[0] {
-	case "get":
-		result, err := kv.Get(os.Args[1])
-		if err != nil {
-			fmt.Println("Error:", err.Error())
-			os.Exit(1)
-		}
-
-		fmt.Println(string(result))
-
-	case "put":
-		err := kv.Put(os.Args[1], []byte(os.Args[2]))
-		if err != nil {
-			fmt.Println("Error:", err.Error())
-			os.Exit(1)
-		}
-
-	default:
-		fmt.Println("Please only use 'get' or 'put'")
-		os.Exit(1)
-	}
+	// We should have a Greeter now
+	greeter := raw.(shared.Greeter)
+	fmt.Println(greeter.Greet())
 }
 
 // GetClientConfig return rest config, if path not specified, assume in cluster config

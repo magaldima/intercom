@@ -220,11 +220,6 @@ func (c *Client) Client() (ClientProtocol, error) {
 // Once a client has been started once, it cannot be started again, even if
 // it was killed.
 func (c *Client) Start() (addr net.Addr, err error) {
-	defer func(c *Client) {
-		if err != nil {
-			c.Kill()
-		}
-	}(c)
 	c.l.Lock()
 	defer c.l.Unlock()
 
@@ -284,6 +279,19 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	}
 	c.deploymentName = createdDeployment.Name
 
+	// Make sure the deployment is properly cleaned up if there is an error
+	defer func() {
+		r := recover()
+
+		if err != nil || r != nil {
+			deployments.Delete(deployment.Name, &metav1.DeleteOptions{})
+		}
+
+		if r != nil {
+			panic(r)
+		}
+	}()
+
 	// apply overrides to the deployment and service
 	service.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
 		*metav1.NewControllerRef(createdDeployment, appsv1.SchemeGroupVersion.WithKind("Deployment")),
@@ -293,16 +301,15 @@ func (c *Client) Start() (addr net.Addr, err error) {
 		return nil, fmt.Errorf("failed to create service '%s': %s", service.Name, err)
 	}
 
-	// TODO: remove this
-	time.Sleep(5 * time.Second)
-
 	c.logger.Debug("starting plugin")
-	//serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
-	serviceAddr := createdService.Name + ":7777"
+	serviceAddr := createdService.Name + ":" + strconv.FormatInt(int64(createdService.Spec.Ports[0].Port), 10)
 	addr, err = net.ResolveTCPAddr("tcp", serviceAddr)
 	if err != nil {
 		c.logger.Warn("failed to resolve tcp address from service name", serviceAddr, err)
 	}
+
+	// all the stuff that follows should verify the plugin on startup
+	// go-plugin was doing this through reading the remote logs
 
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
@@ -317,7 +324,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 			c.logger.Info("attempting to list plugin pods")
 
 			opts := metav1.ListOptions{
-				LabelSelector:  labels.Set{"plugin": "kv"}.String(),
+				LabelSelector:  labels.Set{"plugin": "greeter"}.String(),
 				TimeoutSeconds: &timeoutList,
 			}
 			podList, err = pods.List(opts)
@@ -344,7 +351,7 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	*/
 	//time.Sleep(5 * time.Second)
 	opts := metav1.ListOptions{
-		LabelSelector:  labels.Set{"plugin": "kv"}.String(),
+		LabelSelector:  labels.Set{"plugin": "greeter"}.String(),
 		TimeoutSeconds: &timeoutList,
 	}
 	podList, err = pods.List(opts)
@@ -377,19 +384,6 @@ func (c *Client) Start() (addr net.Addr, err error) {
 	// Create a context for when we kill
 	var ctxCancel context.CancelFunc
 	c.doneCtx, ctxCancel = context.WithCancel(context.Background())
-
-	// Make sure the command is properly cleaned up if there is an error
-	defer func() {
-		r := recover()
-
-		if err != nil || r != nil {
-			deployments.Delete(deployment.Name, &metav1.DeleteOptions{})
-		}
-
-		if r != nil {
-			panic(r)
-		}
-	}()
 
 	// Start goroutine to wait for deployment to exit
 	exitCh := make(chan struct{})

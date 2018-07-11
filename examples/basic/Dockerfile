@@ -10,14 +10,14 @@ RUN apt-get update && apt-get install -y git
 ENV D=/go/src/github.com/magaldima/intercom
 # deps
 RUN go get -u github.com/golang/dep/...
-COPY ./ $D/app/
+COPY ./*.go $D/app/
 RUN cd $D/app && dep init -v
 
 # build
 RUN cd $D/app && go build -o dist && cp dist /tmp/
 
 # final stage
-FROM scratch
+FROM debian:9.4
 WORKDIR /app/server/
 COPY --from=build-go /tmp/dist /app/server/
-CMD ["./dist"]
+CMD [ "./dist" ]
